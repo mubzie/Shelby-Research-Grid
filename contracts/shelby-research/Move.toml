@@ -1,0 +1,16 @@
+[package]
+name = "shelby_research"
+version = "0.1.0"
+
+[dependencies.AptosStdlib]
+git = "https://github.com/aptos-labs/aptos-core.git"
+rev = "mainnet"
+subdir = "aptos-move/framework/aptos-stdlib"
+
+[dependencies.AptosFramework]
+git = "https://github.com/aptos-labs/aptos-core.git"
+rev = "mainnet"
+subdir = "aptos-move/framework/aptos-framework"
+
+[addresses]
+shelby_research = "0xed8c57d7438e3a8ac788e9b166ec576c2f2ecfbd29d973815af294af4d755a4f"

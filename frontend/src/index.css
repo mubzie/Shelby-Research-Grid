@@ -1,0 +1,66 @@
+@import url('https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700;800&display=swap');
+
+:root {
+  --bg: #ffffff;
+  --surface: #ffffff;
+  --surface-alt: #f7f7f7;
+  --border: #e5e5e5;
+  --border-strong: #d0d0d0;
+  --text-primary: #0f0f0f;
+  --text-secondary: #666666;
+  --primary-main: #1b5fff;
+  --primary-soft: #f0f7ff;
+  --primary-strong: #0f4fd9;
+  --success-main: #10b981;
+  --success-soft: #f0fdf4;
+  --warning-main: #f59e0b;
+  --warning-soft: #fffbeb;
+  --error-main: #ef4444;
+  --error-soft: #fef2f2;
+  --error-strong: #dc2626;
+  --info-main: #0ea5e9;
+  --info-soft: #f0f9ff;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --radius-full: 9999px;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
+  font-family: 'Geist', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background: var(--bg);
+  color: var(--text-primary);
+  color-scheme: light;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at top, rgba(27, 95, 255, 0.08), transparent 34%),
+    linear-gradient(180deg, #ffffff 0%, #fafafa 100%);
+}
+
+a,
+button {
+  font: inherit;
+}
+
+button {
+  appearance: none;
+}
+
+#root {
+  min-height: 100vh;
+}
