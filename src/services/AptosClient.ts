@@ -16,6 +16,12 @@ export interface AptosModule {
 const MODULE = 'access_control';
 const PAYMENT_MODULE = 'payment';
 
+function hexToUtf8(hex: string): string {
+  const clean = hex.replace(/^0x/, '');
+  if (!clean || clean.length % 2 !== 0) return hex;
+  return Buffer.from(clean, 'hex').toString('utf8');
+}
+
 class AptosClient {
   private rpcUrl: string;
   private network: string;
@@ -65,7 +71,7 @@ class AptosClient {
   }
 
   /**
-   * The platform account used to sign on-chain transactions.
+   * The platform account used to sign platform-role transactions (read loop, settlement).
    */
   getSigner(): Account {
     if (!this.account) {
@@ -75,97 +81,65 @@ class AptosClient {
   }
 
   /**
-   * Register dataset ownership on-chain
-   * Calls: shelby_research::access_control::register_dataset
+   * Wait for a transaction and return the confirmed response.
    */
-  async registerDataset(uploaderAddr: string, datasetId: string): Promise<{ txHash: string }> {
-    console.log('[AptosClient] registerDataset called', uploaderAddr, datasetId);
-    if (!this.account || !this.moduleAddress) {
-      console.warn('[AptosClient] Account/module not configured; skipping on-chain registration');
-      return { txHash: 'stub-' + Date.now() };
-    }
+  async waitForTransaction(txHash: string): Promise<{ success: boolean; sender: string; payload: any }> {
+    const tx = await this.clientWithNetwork.waitForTransaction({ transactionHash: txHash });
+    return {
+      success: Boolean(tx.success),
+      sender: String((tx as any).sender || ''),
+      payload: (tx as any).payload || {},
+    };
+  }
+
+  /**
+   * Verify a user-signed register_dataset transaction.
+   * Extracts + cross-checks the dataset id from the tx and requires the sender to be the uploader.
+   */
+  async verifyRegisterTx(txHash: string, expectedDatasetId: string, expectedUploader: string): Promise<boolean> {
     try {
-      const tx = await this.clientWithNetwork.transaction.build.simple({
-        sender: this.account.accountAddress,
-        data: {
-          function: `${this.moduleAddress}::${MODULE}::register_dataset`,
-          functionArguments: [datasetId],
-        },
-      });
-      const pending = await this.clientWithNetwork.signAndSubmitTransaction({ signer: this.account, transaction: tx });
-      await this.clientWithNetwork.waitForTransaction({ transactionHash: pending.hash });
-      return { txHash: pending.hash };
+      const { success, sender, payload } = await this.waitForTransaction(txHash);
+      if (!success) return false;
+      const txFunction = String(payload.function || '').toLowerCase().replace(/^0x/, '');
+      const expectedFunction = `${this.moduleAddress}::${MODULE}::register_dataset`.toLowerCase();
+      if (txFunction !== expectedFunction) return false;
+      if (sender.toLowerCase() !== expectedUploader.toLowerCase()) return false;
+      const args = payload.arguments || [];
+      const datasetIdFromTx = hexToUtf8(String(args[0] || ''));
+      return datasetIdFromTx === expectedDatasetId;
     } catch (e: any) {
-      console.warn('[AptosClient] registerDataset failed:', e?.message || e);
-      return { txHash: 'stub-' + Date.now() };
+      console.warn('[AptosClient] verifyRegisterTx failed:', e?.message || e);
+      return false;
     }
   }
 
   /**
-   * Grant access to a collaborator on-chain
-   * Calls: shelby_research::access_control::grant_access
+   * Verify a user-signed grant_access transaction (owner → grantee on a dataset).
    */
-  async grantAccess(
+  async verifyGrantTx(txHash: string, expectedDatasetId: string, expectedGrantee: string, expectedOwner: string): Promise<boolean> {
+    try {
+      const { success, sender, payload } = await this.waitForTransaction(txHash);
+      if (!success) return false;
+      const txFunction = String(payload.function || '').toLowerCase().replace(/^0x/, '');
+      const expectedFunction = `${this.moduleAddress}::${MODULE}::grant_access`.toLowerCase();
+      if (txFunction !== expectedFunction) return false;
+      if (sender.toLowerCase() !== expectedOwner.toLowerCase()) return false;
+      const args = payload.arguments || [];
+      const datasetIdFromTx = hexToUtf8(String(args[0] || ''));
+      const granteeFromTx = String(args[1] || '').toLowerCase();
+      return datasetIdFromTx === expectedDatasetId && granteeFromTx === expectedGrantee.toLowerCase();
+    } catch (e: any) {
+      console.warn('[AptosClient] verifyGrantTx failed:', e?.message || e);
+      return false;
+    }
+  }
+
+  /**
+   * Record a read + payment on behalf of an owner (platform operator role)
+   * Calls: shelby_research::payment::record_read_by_platform
+   */
+  async recordRead(
     uploaderAddr: string,
-    datasetId: string,
-    granteeAddr: string,
-    durationSecs: number,
-    readLimit: number
-  ): Promise<{ txHash: string }> {
-    console.log('[AptosClient] grantAccess called', uploaderAddr, datasetId, granteeAddr);
-    if (!this.account || !this.moduleAddress) {
-      console.warn('[AptosClient] Account/module not configured; skipping grant');
-      return { txHash: 'stub-' + Date.now() };
-    }
-    try {
-      const tx = await this.clientWithNetwork.transaction.build.simple({
-        sender: this.account.accountAddress,
-        data: {
-          function: `${this.moduleAddress}::${MODULE}::grant_access`,
-          functionArguments: [datasetId, granteeAddr, durationSecs, readLimit],
-        },
-      });
-      const pending = await this.clientWithNetwork.signAndSubmitTransaction({ signer: this.account, transaction: tx });
-      await this.clientWithNetwork.waitForTransaction({ transactionHash: pending.hash });
-      return { txHash: pending.hash };
-    } catch (e: any) {
-      console.warn('[AptosClient] grantAccess failed:', e?.message || e);
-      return { txHash: 'stub-' + Date.now() };
-    }
-  }
-
-  /**
-   * Revoke access on-chain
-   * Calls: shelby_research::access_control::revoke_access
-   */
-  async revokeAccess(uploaderAddr: string, datasetId: string, granteeAddr: string): Promise<{ txHash: string }> {
-    console.log('[AptosClient] revokeAccess called', uploaderAddr, datasetId, granteeAddr);
-    if (!this.account || !this.moduleAddress) {
-      console.warn('[AptosClient] Account/module not configured; skipping revoke');
-      return { txHash: 'stub-' + Date.now() };
-    }
-    try {
-      const tx = await this.clientWithNetwork.transaction.build.simple({
-        sender: this.account.accountAddress,
-        data: {
-          function: `${this.moduleAddress}::${MODULE}::revoke_access`,
-          functionArguments: [datasetId, granteeAddr],
-        },
-      });
-      const pending = await this.clientWithNetwork.signAndSubmitTransaction({ signer: this.account, transaction: tx });
-      await this.clientWithNetwork.waitForTransaction({ transactionHash: pending.hash });
-      return { txHash: pending.hash };
-    } catch (e: any) {
-      console.warn('[AptosClient] revokeAccess failed:', e?.message || e);
-      return { txHash: 'stub-' + Date.now() };
-    }
-  }
-
-  /**
-   * Record a read event on-chain for payment tracking
-   * Calls: shelby_research::payment::record_read
-   */
-  async recordRead(    uploaderAddr: string,
     datasetId: string,
     readerAddr: string,
     amountMillAPT: number
@@ -179,8 +153,8 @@ class AptosClient {
       const tx = await this.clientWithNetwork.transaction.build.simple({
         sender: this.account.accountAddress,
         data: {
-          function: `${this.moduleAddress}::${PAYMENT_MODULE}::record_read`,
-          functionArguments: [datasetId, readerAddr, amountMillAPT],
+          function: `${this.moduleAddress}::${PAYMENT_MODULE}::record_read_by_platform`,
+          functionArguments: [uploaderAddr, datasetId, readerAddr, amountMillAPT],
         },
       });
       const pending = await this.clientWithNetwork.signAndSubmitTransaction({ signer: this.account, transaction: tx });
@@ -193,11 +167,11 @@ class AptosClient {
   }
 
   /**
-   * Log a read event in the access control module
-   * Calls: shelby_research::access_control::log_read
+   * Log a read in the owner's access control manager (platform operator role)
+   * Calls: shelby_research::access_control::log_read_by_platform
    */
-  async logRead(datasetId: string, readerAddr: string, bytesRead: number): Promise<{ txHash: string }> {
-    console.log('[AptosClient] logRead called', datasetId, readerAddr, bytesRead);
+  async logRead(ownerAddr: string, datasetId: string, readerAddr: string, bytesRead: number): Promise<{ txHash: string }> {
+    console.log('[AptosClient] logRead called', ownerAddr, datasetId, readerAddr, bytesRead);
     if (!this.account || !this.moduleAddress) {
       console.warn('[AptosClient] Account/module not configured; skipping read log');
       return { txHash: 'stub-' + Date.now() };
@@ -206,8 +180,8 @@ class AptosClient {
       const tx = await this.clientWithNetwork.transaction.build.simple({
         sender: this.account.accountAddress,
         data: {
-          function: `${this.moduleAddress}::${MODULE}::log_read`,
-          functionArguments: [datasetId, readerAddr, bytesRead],
+          function: `${this.moduleAddress}::${MODULE}::log_read_by_platform`,
+          functionArguments: [ownerAddr, datasetId, readerAddr, bytesRead],
         },
       });
       const pending = await this.clientWithNetwork.signAndSubmitTransaction({ signer: this.account, transaction: tx });
@@ -220,8 +194,8 @@ class AptosClient {
   }
 
   /**
-   * Settle batch payments (called by cron job daily)
-   * Calls: shelby_research::payment::settle_dataset_payments
+   * Settle batch payments (platform operator role, called by cron job daily)
+   * Calls: shelby_research::payment::settle_dataset_payments_by_platform
    */
   async settlePayments(uploaderAddr: string, datasetId: string, totalMillAPT: number): Promise<{ txHash: string }> {
     console.log('[AptosClient] settlePayments called', uploaderAddr, datasetId, totalMillAPT);
@@ -233,8 +207,8 @@ class AptosClient {
       const tx = await this.clientWithNetwork.transaction.build.simple({
         sender: this.account.accountAddress,
         data: {
-          function: `${this.moduleAddress}::${PAYMENT_MODULE}::settle_dataset_payments`,
-          functionArguments: [datasetId, totalMillAPT],
+          function: `${this.moduleAddress}::${PAYMENT_MODULE}::settle_dataset_payments_by_platform`,
+          functionArguments: [uploaderAddr, datasetId, totalMillAPT],
         },
       });
       const pending = await this.clientWithNetwork.signAndSubmitTransaction({ signer: this.account, transaction: tx });
@@ -247,16 +221,17 @@ class AptosClient {
   }
 
   /**
-   * Check whether a reader currently has valid access on-chain
+   * Check whether a reader currently has valid access on-chain.
+   * The owner is the dataset uploader (their wallet signed the registration).
    * Calls: shelby_research::access_control::has_valid_access (view)
    */
-  async hasValidAccess(datasetId: string, readerAddr: string): Promise<boolean> {
+  async hasValidAccess(ownerAddr: string, datasetId: string, readerAddr: string): Promise<boolean> {
     if (!this.moduleAddress) return false;
     try {
       const result = await this.clientWithNetwork.view({
         payload: {
           function: `${this.moduleAddress}::${MODULE}::has_valid_access`,
-          functionArguments: [this.moduleAddress, datasetId, readerAddr],
+          functionArguments: [ownerAddr, datasetId, readerAddr],
         },
       });
       return Boolean(result[0]);

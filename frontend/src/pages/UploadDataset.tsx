@@ -4,7 +4,7 @@ import Input from '../components/Input'
 import FileUploadInput from '../components/FileUploadInput'
 import Button from '../components/Button'
 import { useWallet } from '../hooks/useWallet'
-import { API_BASE_URL } from '../config'
+import { API_BASE_URL, APTOS_MODULE_ADDRESS } from '../config'
 import { encryptFile } from '../utils/encryption'
 
 export interface UploadResult {
@@ -32,7 +32,7 @@ interface UploadDatasetProps {
 
 const UploadDataset = ({ encryptionService = defaultEncryptionService }: UploadDatasetProps) => {
   const navigate = useNavigate()
-  const { ready = true, connected, account } = useWallet()
+  const { ready = true, connected, account, signAndSubmitTransaction } = useWallet()
   const [datasetName, setDatasetName] = useState('')
   const [virusTypes, setVirusTypes] = useState('')
   const [visibility, setVisibility] = useState<'private' | 'internal' | 'public'>('private')
@@ -91,11 +91,24 @@ const UploadDataset = ({ encryptionService = defaultEncryptionService }: UploadD
       const enc = await encryptionService.encrypt(fileBytes)
       const ciphertextFile = new File([enc.ciphertext.slice().buffer as ArrayBuffer], `${file.name}.enc`, { type: 'application/octet-stream' })
 
+      // The dataset id is generated client-side so it can be committed on-chain first
+      const datasetId = crypto.randomUUID()
+
+      // Sign + submit register_dataset with the user's wallet (1 wallet prompt)
+      const signed = await signAndSubmitTransaction({
+        data: {
+          function: `${APTOS_MODULE_ADDRESS}::access_control::register_dataset`,
+          functionArguments: [datasetId],
+        },
+      })
+
       const formData = new FormData()
       formData.append('file', ciphertextFile)
       formData.append('iv', enc.iv)
       formData.append('auth_tag', enc.authTag)
       formData.append('data_key', enc.dataKey)
+      formData.append('dataset_id', datasetId)
+      formData.append('register_tx_hash', signed.hash)
       formData.append(
         'metadata',
         JSON.stringify({

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import Button from '../components/Button'
 import { useWallet } from '../hooks/useWallet'
-import { API_BASE_URL } from '../config'
+import { API_BASE_URL, APTOS_MODULE_ADDRESS } from '../config'
 
 interface Stats {
   datasets_count: number
@@ -32,15 +32,27 @@ interface ActivityItem {
   at: string
 }
 
+interface AccessRequest {
+  id: string
+  dataset_id: string
+  dataset_title: string
+  requester_addr: string
+  status: string
+  created_at: string
+}
+
 const shortAddr = (addr: string) => (addr.length > 14 ? `${addr.slice(0, 6)}…${addr.slice(-4)}` : addr)
 
 const Dashboard = () => {
   const navigate = useNavigate()
-  const { ready = true, connected, account, balance, disconnect } = useWallet()
+  const { ready = true, connected, account, balance, disconnect, signAndSubmitTransaction } = useWallet()
   const [stats, setStats] = useState<Stats | null>(null)
   const [datasets, setDatasets] = useState<Dataset[]>([])
   const [activity, setActivity] = useState<ActivityItem[]>([])
+  const [accessRequests, setAccessRequests] = useState<AccessRequest[]>([])
+  const [approvingId, setApprovingId] = useState<string | null>(null)
   const [statsError, setStatsError] = useState<string | null>(null)
+  const [requestError, setRequestError] = useState<string | null>(null)
 
   useEffect(() => {
     if (!connected || !account?.address) return
@@ -76,10 +88,73 @@ const Dashboard = () => {
         if (!cancelled) setActivity([])
       })
 
+    fetch(`${base}/api/datasets/access-requests?owner_addr=${uploader}`)
+      .then((r) => r.json())
+      .then((data: { requests?: AccessRequest[] }) => {
+        if (!cancelled) setAccessRequests(data.requests ?? [])
+      })
+      .catch(() => {
+        if (!cancelled) setAccessRequests([])
+      })
+
     return () => {
       cancelled = true
     }
   }, [connected, account?.address])
+
+  const handleApprove = async (request: AccessRequest) => {
+    if (!account?.address) return
+    setApprovingId(request.id)
+    setRequestError(null)
+    try {
+      // Owner signs grant_access with their wallet (1 prompt)
+      const signed = await signAndSubmitTransaction({
+        data: {
+          function: `${APTOS_MODULE_ADDRESS}::access_control::grant_access`,
+          functionArguments: [request.dataset_id, request.requester_addr, 86400, 10],
+        },
+      })
+      const response = await fetch(
+        `${API_BASE_URL.replace(/\/$/, '')}/api/datasets/${request.dataset_id}/access-requests/${request.id}/approve`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ grant_tx_hash: signed.hash, owner_addr: account.address }),
+        }
+      )
+      const result = (await response.json()) as { error?: string }
+      if (!response.ok) {
+        throw new Error(result.error || 'Approval failed')
+      }
+      setAccessRequests((prev) => prev.map((r) => (r.id === request.id ? { ...r, status: 'granted' } : r)))
+    } catch (error) {
+      setRequestError(error instanceof Error ? error.message : 'Approval failed')
+    } finally {
+      setApprovingId(null)
+    }
+  }
+
+  const handleReject = async (request: AccessRequest) => {
+    if (!account?.address) return
+    setRequestError(null)
+    try {
+      const response = await fetch(
+        `${API_BASE_URL.replace(/\/$/, '')}/api/datasets/${request.dataset_id}/access-requests/${request.id}/reject`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ owner_addr: account.address }),
+        }
+      )
+      const result = (await response.json()) as { error?: string }
+      if (!response.ok) {
+        throw new Error(result.error || 'Reject failed')
+      }
+      setAccessRequests((prev) => prev.map((r) => (r.id === request.id ? { ...r, status: 'rejected' } : r)))
+    } catch (error) {
+      setRequestError(error instanceof Error ? error.message : 'Reject failed')
+    }
+  }
 
   if (!ready) {
     return (
@@ -205,6 +280,42 @@ const Dashboard = () => {
                     )}
                     {item.type === 'access_granted' && item.read_count != null && (
                       <span>{item.read_count} reads</span>
+                    )}
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </section>
+
+        <section className="activity-section">
+          <h2>Access Requests</h2>
+          {requestError && <p className="error-message">{requestError}</p>}
+          <div className="activity-list" data-testid="access-requests-list">
+            {accessRequests.length === 0 ? (
+              <p className="empty-state">No access requests</p>
+            ) : (
+              accessRequests.map((req) => (
+                <div className="dataset-row" key={req.id}>
+                  <div className="dataset-row-info">
+                    <strong>{req.dataset_title || 'Untitled dataset'}</strong>
+                    <span className="dataset-meta">
+                      {shortAddr(req.requester_addr)} · {new Date(req.created_at).toLocaleString()} ·{' '}
+                      <span className={`request-status request-status-${req.status}`}>{req.status}</span>
+                    </span>
+                  </div>
+                  <div className="dataset-row-stats">
+                    {req.status === 'pending' ? (
+                      <>
+                        <Button variant="primary" size="sm" onClick={() => handleApprove(req)} loading={approvingId === req.id} disabled={approvingId !== null} data-testid={`approve-${req.id}`}>
+                          {approvingId === req.id ? 'Signing...' : 'Approve'}
+                        </Button>
+                        <Button variant="danger" size="sm" onClick={() => handleReject(req)} disabled={approvingId !== null} data-testid={`reject-${req.id}`}>
+                          Reject
+                        </Button>
+                      </>
+                    ) : (
+                      <span className="dataset-meta">{req.status === 'granted' ? 'Access granted' : 'Request rejected'}</span>
                     )}
                   </div>
                 </div>

@@ -945,3 +945,25 @@
     font-size: 1.8rem;
   }
 }
+
+.request-status {
+  text-transform: capitalize;
+  font-size: 0.75rem;
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+
+.request-status-pending {
+  background: rgba(245, 158, 11, 0.15);
+  color: #d97706;
+}
+
+.request-status-granted {
+  background: rgba(16, 185, 129, 0.15);
+  color: #059669;
+}
+
+.request-status-rejected {
+  background: rgba(239, 68, 68, 0.12);
+  color: #dc2626;
+}

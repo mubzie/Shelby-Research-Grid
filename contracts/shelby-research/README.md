@@ -53,9 +53,25 @@ aptos move test
 > The RPC gateway (`shelby.shelbynet.shelby.xyz/shelby`) rate-limits anonymous requests; a
 > geomi **server** key covering the shelbynet RPC lifts the limit. The backend proxies RPC
 > calls via `/api/shelby-rpc` injecting `x-api-key` (the SDK sends `Authorization: Bearer`,
-> which the gateway rejects). Verified end-to-end on the hybrid setup: upload → shelbynet blob
-> + testnet register_dataset tx → testnet grant → authorized download → AES-GCM decryption →
-> byte-exact plaintext, ungranted reader 403, read logging + counters on testnet.
+> which the gateway rejects).
+>
+> ## Wallet-signing model
+>
+> Users sign their own decisions with their wallet (Petra on testnet):
+> - `register_dataset` — signed by the uploader's wallet on upload (dataset id is generated
+>   client-side; the backend verifies the tx on-chain before storing the blob)
+> - `grant_access` / `revoke_access` — signed by the dataset owner when approving access
+>   requests
+>
+> The platform account signs only:
+> - Shelby blob registration/commit on shelbynet (the user's wallet cannot be on two networks)
+> - `log_read_by_platform` / `record_read_by_platform` / `settle_dataset_payments_by_platform`
+>   via the `PlatformState` role set by `initialize_platform` — the automated read/payment
+>   loop (the owner can't be online for every read)
+>
+> Access is requested by readers (`access_requests` table) and approved by owners from the
+> dashboard. The on-chain access check (`has_valid_access`) runs against the **owner's**
+> address, stored in `datasets.uploader_addr`.
 
 
 

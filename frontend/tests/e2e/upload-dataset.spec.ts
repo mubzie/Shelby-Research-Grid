@@ -1,13 +1,21 @@
 import { test, expect } from '@playwright/test'
-import { seedConnectedWallet } from './helpers/wallet'
+import { installMockWallet } from './helpers/wallet'
 
 test.describe('Complete Upload Flow', () => {
-  test('uploads a file, shows blob id + merkle root, and navigates back to the dashboard', async ({ page }) => {
-    await seedConnectedWallet(page)
-    await page.goto('/datasets/upload')
+  test('connects wallet, signs register_dataset, uploads, shows blob id + merkle root', async ({ page }) => {
+    await installMockWallet(page)
+    await page.goto('/')
+
+    // Connect through the wallet selector so the adapter has a signer
+    await page.getByRole('button', { name: /Connect Wallet/i }).click()
+    const modal = page.getByRole('dialog')
+    await expect(modal).toBeVisible()
+    await modal.getByRole('button', { name: /Connect/i }).click()
+    await page.waitForURL('**/dashboard')
 
     // Intercept the upload API with a deterministic fixture (real path covered by integration tests)
     await page.route('**/api/datasets/upload', async (route) => {
+      const body = route.request().postData() ?? ''
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -15,12 +23,16 @@ test.describe('Complete Upload Flow', () => {
           dataset_id: 'e2e-uuid-0000',
           shelby_blob_id: 'datasets/e2e-uuid-0000.bin',
           merkle_root: '0xe2e0000000000000000000000000000000000000000000000000000000000000',
-          integrity_verified: true,
+          integrity_verified: false,
           encrypted: true,
-          on_chain_tx: '0x' + 'e2'.repeat(32),
+          on_chain_tx: '0x' + 'aa'.repeat(32),
+          _received_register_tx_hash: body.includes('aa'.repeat(32)) ? 'present' : 'missing',
         }),
       })
     })
+
+    await page.getByRole('button', { name: /Upload.*Dataset/i }).click()
+    await page.waitForURL('**/datasets/upload')
 
     await page.locator('input[type="file"]').setInputFiles({ name: 'sample-virus-data.csv', mimeType: 'text/csv', buffer: Buffer.from('strain,sequence\nomicron,ATCG') })
     await expect(page.getByText('sample-virus-data.csv')).toBeVisible()

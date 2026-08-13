@@ -2,6 +2,9 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useWallet as useAptosWallet } from '@aptos-labs/wallet-adapter-react'
 import { Aptos, AptosConfig, Network } from '@aptos-labs/ts-sdk'
 
+type AdapterWallet = ReturnType<typeof useAptosWallet>
+type InputTransactionData = Parameters<AdapterWallet['signAndSubmitTransaction']>[0]
+
 export interface WalletAccount {
   address: string
 }
@@ -15,6 +18,7 @@ export interface UseWalletReturn {
   error: string | null
   connect: (walletName?: string) => Promise<void>
   disconnect: () => Promise<void>
+  signAndSubmitTransaction: (transaction: InputTransactionData) => Promise<{ hash: string }>
 }
 
 const WALLET_STORAGE_KEY = 'aptos:wallet'
@@ -157,7 +161,18 @@ export const useWallet = (): UseWalletReturn => {
     setError(null)
   }, [adapter])
 
-  return { ready, connected, connecting, account, balance, error, connect, disconnect }
+  const signAndSubmitTransaction = useCallback(
+    async (transaction: InputTransactionData) => {
+      if (!adapter.signAndSubmitTransaction) {
+        throw new Error('Wallet does not support transaction signing')
+      }
+      const result = await adapter.signAndSubmitTransaction(transaction)
+      return { hash: String(result.hash) }
+    },
+    [adapter]
+  )
+
+  return { ready, connected, connecting, account, balance, error, connect, disconnect, signAndSubmitTransaction }
 }
 
 export default useWallet

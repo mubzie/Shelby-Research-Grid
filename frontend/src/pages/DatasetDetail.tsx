@@ -37,7 +37,7 @@ const DatasetDetail = () => {
   const [isRequestingAccess, setIsRequestingAccess] = useState(false)
   const [isDownloading, setIsDownloading] = useState(false)
   const [actionMessage, setActionMessage] = useState<{ kind: 'success' | 'error'; text: string } | null>(null)
-  const [accessGranted, setAccessGranted] = useState(false)
+  const [accessRequested, setAccessRequested] = useState(false)
 
   const base = API_BASE_URL.replace(/\/$/, '')
   const isOwner = Boolean(dataset && account?.address && dataset.uploader_addr.toLowerCase() === account.address.toLowerCase())
@@ -66,21 +66,20 @@ const DatasetDetail = () => {
     setIsRequestingAccess(true)
     setActionMessage(null)
     try {
-      const response = await fetch(`${base}/api/datasets/${dataset.id}/grants`, {
+      const response = await fetch(`${base}/api/datasets/${dataset.id}/access-requests`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          grantee_addr: account.address,
-          duration_secs: 86400,
-          read_limit: 10,
-        }),
+        body: JSON.stringify({ requester_addr: account.address }),
       })
-      const result = (await response.json()) as { error?: string; tx_hash?: string }
+      const result = (await response.json()) as { error?: string; status?: string }
       if (!response.ok) {
         throw new Error(result.error || 'Access request failed')
       }
-      setAccessGranted(true)
-      setActionMessage({ kind: 'success', text: `Access granted on-chain (${result.tx_hash?.slice(0, 12)}…) — you can now download.` })
+      setAccessRequested(true)
+      setActionMessage({
+        kind: 'success',
+        text: 'Access request sent. The owner must approve it before you can download.',
+      })
     } catch (error) {
       setActionMessage({ kind: 'error', text: error instanceof Error ? error.message : 'Access request failed' })
     } finally {
@@ -185,7 +184,7 @@ const DatasetDetail = () => {
             <section className="detail-actions">
               {!connected ? (
                 <p className="empty-state">Connect your wallet to request access or download this dataset.</p>
-              ) : isOwner || accessGranted ? (
+              ) : isOwner || accessRequested ? (
                 <Button variant="primary" onClick={handleDownload} loading={isDownloading} disabled={isDownloading} data-testid="download-btn">
                   {isDownloading ? 'Downloading...' : 'Download Dataset'}
                 </Button>

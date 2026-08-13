@@ -10,14 +10,26 @@ const upload = multer({ storage: multer.memoryStorage() });
 const router = Router();
 
 // POST /datasets/upload
+// The user signs register_dataset with their wallet FIRST; this endpoint verifies that
+// on-chain tx, then uploads the blob to Shelby and persists the record.
 router.post('/upload', upload.single('file'), async (req: Request, res: Response) => {
   try {
     const file = req.file;
     const metadata = req.body.metadata ? JSON.parse(req.body.metadata) : {};
     const uploader = req.body.uploader_addr;
+    const datasetId = String(req.body.dataset_id || '');
+    const registerTxHash = String(req.body.register_tx_hash || '');
 
     if (!file) return res.status(400).json({ error: 'No file provided' });
     if (!uploader) return res.status(400).json({ error: 'No uploader address provided' });
+    if (!datasetId) return res.status(400).json({ error: 'No dataset_id provided (generate it in the client)' });
+    if (!registerTxHash) return res.status(400).json({ error: 'No register_tx_hash provided (sign register_dataset with your wallet first)' });
+
+    // Verify the user-signed on-chain registration
+    const verified = await AptosClient.verifyRegisterTx(registerTxHash, datasetId, uploader);
+    if (!verified) {
+      return res.status(403).json({ error: 'register_dataset transaction could not be verified on-chain' });
+    }
 
     // Client-side encryption metadata (base64 iv / auth tag / wrapped data key)
     const encIv = String(req.body.iv || '');
@@ -31,18 +43,18 @@ router.post('/upload', upload.single('file'), async (req: Request, res: Response
     // Normalize client base64 iv/auth tag to hex for storage
     const encIvHex = isEncrypted ? Buffer.from(encIv, 'base64').toString('hex') : null;
     const encAuthTagHex = isEncrypted ? Buffer.from(encAuthTag, 'base64').toString('hex') : null;
-    // Allocate the dataset id up front so the blob name can reference it
-    const datasetId = crypto.randomUUID();
 
     // Upload ciphertext to Shelby (real blob registration + storage upload)
     const result = await ShelbyClient.uploadDataset(file.buffer, datasetId);
 
-    // Verify blob integrity by recomputing the merkle root from downloaded bytes
+    // Optional integrity re-verification (downloads the blob back — burns RPC quota; off by default)
     let integrityVerified = false;
-    try {
-      integrityVerified = await ShelbyClient.verifyBlobIntegrity(result.blobId, result.merkleRoot);
-    } catch (e: any) {
-      console.warn('Integrity verification failed', e?.message || e);
+    if (process.env.VERIFY_BLOB_INTEGRITY === 'true') {
+      try {
+        integrityVerified = await ShelbyClient.verifyBlobIntegrity(result.blobId, result.merkleRoot);
+      } catch (e: any) {
+        console.warn('Integrity verification failed', e?.message || e);
+      }
     }
 
     // Persist the dataset record (best-effort; skip if DATABASE_URL is not set)
@@ -58,16 +70,7 @@ router.post('/upload', upload.single('file'), async (req: Request, res: Response
         encIvHex, encAuthTagHex, wrapped];
       await pool.query(q, values);
 
-      // Register dataset ownership on-chain (real transaction; no stub fallback)
-      let onChainTx: string | null = null;
-      try {
-        const reg = await AptosClient.registerDataset(uploader, String(datasetId));
-        if (reg.txHash && !reg.txHash.startsWith('stub-')) onChainTx = reg.txHash;
-      } catch (chainErr: any) {
-        console.warn('On-chain registration failed', chainErr?.message || chainErr);
-      }
-
-      return res.json({ dataset_id: datasetId, shelby_blob_id: result.blobId, merkle_root: result.merkleRoot, integrity_verified: integrityVerified, encrypted: isEncrypted, on_chain_tx: onChainTx });
+      return res.json({ dataset_id: datasetId, shelby_blob_id: result.blobId, merkle_root: result.merkleRoot, integrity_verified: integrityVerified, encrypted: isEncrypted, on_chain_tx: registerTxHash });
     } catch (dbErr: any) {
       console.warn('DB insert failed, returning upload result anyway', dbErr.message || dbErr);
       return res.json({ dataset_id: datasetId, shelby_blob_id: result.blobId, merkle_root: result.merkleRoot, warning: 'DB unavailable' });
@@ -75,7 +78,14 @@ router.post('/upload', upload.single('file'), async (req: Request, res: Response
 
   } catch (err: any) {
     console.error(err);
-    return res.status(500).json({ error: 'Upload failed', details: err.message });
+    const details = String(err?.message || '');
+    if (details.includes('429') || details.toLowerCase().includes('rate limit')) {
+      return res.status(503).json({
+        error: 'Shelby RPC is rate-limited. Wait a few minutes and try again.',
+        details,
+      });
+    }
+    return res.status(500).json({ error: 'Upload failed', details });
   }
 });
 
@@ -120,41 +130,121 @@ router.get('/', async (req: Request, res: Response) => {
   }
 });
 
-// POST /datasets/:id/grants — grant time-limited read access to a collaborator
-router.post('/:id/grants', async (req: Request, res: Response) => {
+// POST /datasets/:id/access-requests — a reader requests access (owner approves by signing grant_access)
+router.post('/:id/access-requests', async (req: Request, res: Response) => {
   try {
     const datasetId = String((req.params as any).id || '');
-    const granteeAddr = String(req.body.grantee_addr || '');
-    const durationSecs = parseInt(String(req.body.duration_secs || '3600'), 10);
-    const readLimit = parseInt(String(req.body.read_limit || '10'), 10);
+    const requesterAddr = String(req.body.requester_addr || '');
 
-    if (!datasetId || !granteeAddr) {
-      return res.status(400).json({ error: 'dataset_id and grantee_addr are required' });
+    if (!datasetId || !requesterAddr) {
+      return res.status(400).json({ error: 'dataset_id and requester_addr are required' });
+    }
+    if (!process.env.DATABASE_URL) {
+      return res.status(503).json({ error: 'DB unavailable' });
     }
 
-    const result = await AptosClient.grantAccess('', datasetId, granteeAddr, durationSecs, readLimit);
-    return res.json({ dataset_id: datasetId, grantee_addr: granteeAddr, tx_hash: result.txHash });
+    // Prevent requesting access to your own dataset
+    const ds = await pool.query('SELECT uploader_addr FROM datasets WHERE id = $1', [datasetId]);
+    if (!ds.rows[0]) return res.status(404).json({ error: 'Dataset not found' });
+    if (ds.rows[0].uploader_addr.toLowerCase() === requesterAddr.toLowerCase()) {
+      return res.status(400).json({ error: 'You own this dataset' });
+    }
+
+    const r = await pool.query(
+      `INSERT INTO access_requests (dataset_id, requester_addr, status)
+       VALUES ($1, $2, 'pending')
+       ON CONFLICT (dataset_id, requester_addr) DO UPDATE SET status = 'pending', created_at = NOW()
+       RETURNING id, status`,
+      [datasetId, requesterAddr]
+    );
+    return res.status(201).json({ request_id: r.rows[0].id, status: r.rows[0].status });
   } catch (err: any) {
-    console.error('Grant access failed', err);
-    return res.status(500).json({ error: 'Grant failed', details: err.message });
+    console.error('Access request failed', err);
+    return res.status(500).json({ error: 'Access request failed', details: err.message });
   }
 });
 
-// DELETE /datasets/:id/grants/:grantee — revoke access
-router.delete('/:id/grants/:grantee', async (req: Request, res: Response) => {
+// GET /datasets/access-requests?owner_addr=... — pending/in-progress requests for the owner's datasets
+router.get('/access-requests', async (req: Request, res: Response) => {
+  try {
+    const owner = Array.isArray(req.query.owner_addr) ? req.query.owner_addr[0] : (req.query.owner_addr as string) || '';
+    if (!process.env.DATABASE_URL || !owner) {
+      return res.json({ requests: [] });
+    }
+    const r = await pool.query(
+      `SELECT ar.id, ar.dataset_id, ar.requester_addr, ar.status, ar.created_at, d.title AS dataset_title
+       FROM access_requests ar JOIN datasets d ON d.id = ar.dataset_id
+       WHERE d.uploader_addr = $1
+       ORDER BY ar.created_at DESC`,
+      [owner]
+    );
+    return res.json({ requests: r.rows });
+  } catch (err: any) {
+    console.error('Access requests list failed', err);
+    return res.status(500).json({ error: 'Access requests failed', details: err.message });
+  }
+});
+
+// POST /datasets/:id/access-requests/:requestId/approve
+// The OWNER signs grant_access in their wallet, then reports the tx hash here for verification.
+router.post('/:id/access-requests/:requestId/approve', async (req: Request, res: Response) => {
   try {
     const datasetId = String((req.params as any).id || '');
-    const granteeAddr = String((req.params as any).grantee || '');
+    const requestId = String((req.params as any).requestId || '');
+    const grantTxHash = String(req.body.grant_tx_hash || '');
+    const ownerAddr = String(req.body.owner_addr || '');
 
-    if (!datasetId || !granteeAddr) {
-      return res.status(400).json({ error: 'dataset_id and grantee are required' });
+    if (!datasetId || !requestId || !grantTxHash || !ownerAddr) {
+      return res.status(400).json({ error: 'dataset_id, requestId, owner_addr and grant_tx_hash are required' });
+    }
+    if (!process.env.DATABASE_URL) {
+      return res.status(503).json({ error: 'DB unavailable' });
     }
 
-    const result = await AptosClient.revokeAccess('', datasetId, granteeAddr);
-    return res.json({ dataset_id: datasetId, grantee_addr: granteeAddr, tx_hash: result.txHash });
+    const reqRow = await pool.query(
+      `SELECT ar.id, ar.requester_addr, d.uploader_addr
+       FROM access_requests ar JOIN datasets d ON d.id = ar.dataset_id
+       WHERE ar.id = $1 AND ar.dataset_id = $2 AND ar.status = 'pending'`,
+      [requestId, datasetId]
+    );
+    if (!reqRow.rows[0]) return res.status(404).json({ error: 'Pending request not found' });
+    if (reqRow.rows[0].uploader_addr.toLowerCase() !== ownerAddr.toLowerCase()) {
+      return res.status(403).json({ error: 'Only the dataset owner can approve' });
+    }
+
+    const verified = await AptosClient.verifyGrantTx(grantTxHash, datasetId, reqRow.rows[0].requester_addr, ownerAddr);
+    if (!verified) {
+      return res.status(403).json({ error: 'grant_access transaction could not be verified on-chain' });
+    }
+
+    await pool.query(`UPDATE access_requests SET status = 'granted', resolved_at = NOW() WHERE id = $1`, [requestId]);
+    return res.json({ request_id: requestId, status: 'granted', tx_hash: grantTxHash });
   } catch (err: any) {
-    console.error('Revoke access failed', err);
-    return res.status(500).json({ error: 'Revoke failed', details: err.message });
+    console.error('Approve access request failed', err);
+    return res.status(500).json({ error: 'Approve failed', details: err.message });
+  }
+});
+
+// POST /datasets/:id/access-requests/:requestId/reject
+router.post('/:id/access-requests/:requestId/reject', async (req: Request, res: Response) => {
+  try {
+    const requestId = String((req.params as any).requestId || '');
+    const ownerAddr = String(req.body.owner_addr || '');
+    if (!process.env.DATABASE_URL || !requestId || !ownerAddr) {
+      return res.status(400).json({ error: 'requestId and owner_addr are required' });
+    }
+    const r = await pool.query(
+      `UPDATE access_requests ar SET status = 'rejected', resolved_at = NOW()
+       FROM datasets d
+       WHERE ar.id = $1 AND ar.dataset_id = d.id AND d.uploader_addr = $2 AND ar.status = 'pending'
+       RETURNING ar.id`,
+      [requestId, ownerAddr]
+    );
+    if (!r.rows[0]) return res.status(404).json({ error: 'Pending request not found' });
+    return res.json({ request_id: requestId, status: 'rejected' });
+  } catch (err: any) {
+    console.error('Reject access request failed', err);
+    return res.status(500).json({ error: 'Reject failed', details: err.message });
   }
 });
 

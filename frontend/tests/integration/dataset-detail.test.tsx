@@ -5,6 +5,7 @@ import DatasetDetail from '../../src/pages/DatasetDetail'
 jest.mock('../../src/config', () => ({
   API_BASE_URL: 'http://localhost:3001',
   APTOS_FULLNODE_URL: 'https://fullnode.testnet.aptoslabs.com/v1',
+  APTOS_MODULE_ADDRESS: '0xed8c57d7438e3a8ac788e9b166ec576c2f2ecfbd29d973815af294af4d755a4f',
 }))
 
 const mockWallet = {
@@ -33,10 +34,10 @@ describe('Dataset Detail Page', () => {
     mockFetch.mockReset()
     mockFetch.mockImplementation(async (url: string) => {
       const u = String(url)
-      if (u.includes('/grants')) {
+      if (u.includes('/access-requests')) {
         return {
           ok: true,
-          json: async () => ({ tx_hash: '0x' + 'ab'.repeat(32) }),
+          json: async () => ({ status: 'pending' }),
         }
       }
       if (u.includes('/api/download')) {
@@ -85,20 +86,20 @@ describe('Dataset Detail Page', () => {
     })
   })
 
-  it('requesting access calls the grants API and reveals the download button', async () => {
+  it('requesting access posts an access request and shows the pending state', async () => {
     renderDetail()
     await waitFor(() => {
       screen.getByTestId('request-access-btn').click()
     })
     await waitFor(() => {
       expect(mockFetch).toHaveBeenCalledWith(
-        'http://localhost:3001/api/datasets/abc-123/grants',
+        'http://localhost:3001/api/datasets/abc-123/access-requests',
         expect.objectContaining({
           method: 'POST',
           body: expect.stringContaining('0xfcba1234567890abcdef1234567890abcdef1234'),
         })
       )
-      expect(screen.getByTestId('download-btn')).toBeInTheDocument()
+      expect(screen.getByTestId('detail-action-message')).toHaveTextContent(/owner must approve/i)
     })
   })
 

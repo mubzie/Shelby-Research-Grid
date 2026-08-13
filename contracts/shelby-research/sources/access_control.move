@@ -46,6 +46,40 @@ module shelby_research::access_control {
         bytes_read: u64,
     }
 
+    // Error codes
+    const E_NOT_PLATFORM: u64 = 1;
+
+    // The platform operator that records reads / settles payments on behalf of owners
+    struct PlatformState has key {
+        platform: address,
+    }
+
+    // Set the platform operator (called once by the deployer after publishing)
+    public entry fun initialize_platform(admin: &signer) {
+        let addr = signer::address_of(admin);
+        if (!exists<PlatformState>(@shelby_research)) {
+            move_to(admin, PlatformState { platform: addr });
+        }
+    }
+
+    // Change the platform operator (admin = current deployer holding PlatformState)
+    public entry fun set_platform(admin: &signer, new_platform: address) acquires PlatformState {
+        assert!(exists<PlatformState>(@shelby_research), E_NOT_PLATFORM);
+        let state = borrow_global_mut<PlatformState>(@shelby_research);
+        assert!(state.platform == signer::address_of(admin), E_NOT_PLATFORM);
+        state.platform = new_platform;
+    }
+
+    #[view]
+    public fun is_platform(account: address): bool acquires PlatformState {
+        if (!exists<PlatformState>(@shelby_research)) return false;
+        borrow_global<PlatformState>(@shelby_research).platform == account
+    }
+
+    fun assert_platform(platform: &signer) acquires PlatformState {
+        assert!(is_platform(signer::address_of(platform)), E_NOT_PLATFORM);
+    }
+
     // Initialize access control manager
     public fun initialize(account: &signer) {
         let addr = signer::address_of(account);
@@ -181,6 +215,39 @@ module shelby_research::access_control {
         let owner_addr = signer::address_of(owner);
         if (exists<DatasetAccessManager>(owner_addr)) {
             let manager = borrow_global_mut<DatasetAccessManager>(owner_addr);
+            if (table::contains(&manager.access_grants, dataset_id)) {
+                let grants = table::borrow_mut(&mut manager.access_grants, dataset_id);
+                let i = 0;
+                while (i < vector::length(grants)) {
+                    let grant = vector::borrow_mut(grants, i);
+                    if (grant.grantee == reader && grant.is_active) {
+                        grant.read_count = grant.read_count + 1;
+                        break
+                    };
+                    i = i + 1;
+                };
+            };
+        };
+
+        event::emit(DatasetReadEvent {
+            dataset_id,
+            reader,
+            read_at: timestamp::now_seconds(),
+            bytes_read,
+        });
+    }
+
+    // Log a read on behalf of an owner (platform operator role)
+    public entry fun log_read_by_platform(
+        platform: &signer,
+        owner: address,
+        dataset_id: vector<u8>,
+        reader: address,
+        bytes_read: u64,
+    ) acquires DatasetAccessManager, PlatformState {
+        assert_platform(platform);
+        if (exists<DatasetAccessManager>(owner)) {
+            let manager = borrow_global_mut<DatasetAccessManager>(owner);
             if (table::contains(&manager.access_grants, dataset_id)) {
                 let grants = table::borrow_mut(&mut manager.access_grants, dataset_id);
                 let i = 0;

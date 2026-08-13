@@ -51,3 +51,13 @@ CREATE TABLE IF NOT EXISTS read_logs (
 -- Indexes
 CREATE INDEX IF NOT EXISTS idx_datasets_uploader ON datasets(uploader_addr);
 CREATE INDEX IF NOT EXISTS idx_read_logs_reader ON read_logs(reader_addr);
+
+CREATE TABLE IF NOT EXISTS access_requests (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  dataset_id UUID REFERENCES datasets(id) ON DELETE CASCADE,
+  requester_addr VARCHAR(66) NOT NULL,
+  status VARCHAR(20) DEFAULT 'pending',
+  created_at TIMESTAMP DEFAULT NOW(),
+  resolved_at TIMESTAMP,
+  UNIQUE (dataset_id, requester_addr)
+);

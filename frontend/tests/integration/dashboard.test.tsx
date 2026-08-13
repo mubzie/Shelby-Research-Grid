@@ -18,6 +18,7 @@ jest.mock('../../src/hooks/useWallet', () => ({
       shelbyUsd: 5000,
     },
     disconnect: jest.fn(),
+    signAndSubmitTransaction: jest.fn().mockResolvedValue({ hash: '0x' + 'cd'.repeat(32) }),
   }),
 }))
 
@@ -48,6 +49,16 @@ describe('Dashboard Page Integration Tests', () => {
             activity: [
               { type: 'read', dataset_title: 'COVID Dataset', reader_addr: '0xaaaa', bytes_downloaded: 1024, at: '2026-08-12T10:00:00Z' },
               { type: 'access_granted', dataset_title: 'Flu Dataset', grantee_addr: '0xbbbb', read_count: 2, at: '2026-08-11T10:00:00Z' },
+            ],
+          }),
+        }
+      }
+      if (String(url).includes('/access-requests')) {
+        return {
+          ok: true,
+          json: async () => ({
+            requests: [
+              { id: 'req-1', dataset_id: 'abc-123', dataset_title: 'COVID Dataset', requester_addr: '0xdddd', status: 'pending', created_at: '2026-08-12T09:00:00Z' },
             ],
           }),
         }
@@ -95,7 +106,7 @@ describe('Dashboard Page Integration Tests', () => {
   it('lists the user datasets from the API', async () => {
     renderDashboard()
     await waitFor(() => {
-      expect(screen.getByText('COVID Dataset')).toBeInTheDocument()
+      expect(screen.getAllByText('COVID Dataset').length).toBeGreaterThan(0)
     })
   })
 
@@ -112,5 +123,25 @@ describe('Dashboard Page Integration Tests', () => {
   it('displays header with dashboard title', () => {
     renderDashboard()
     expect(screen.getByText('Dashboard')).toBeInTheDocument()
+  })
+
+  it('shows pending access requests and approves one with a wallet-signed grant', async () => {
+    renderDashboard()
+    await waitFor(() => {
+      expect(screen.getByTestId('access-requests-list')).toBeInTheDocument()
+      expect(screen.getByText(/0xdddd/)).toBeInTheDocument()
+    })
+
+    screen.getByTestId('approve-req-1').click()
+
+    await waitFor(() => {
+      // approve endpoint hit with the signed grant tx
+      const approveCall = mockFetch.mock.calls.find(([url]) => String(url).includes('/access-requests/req-1/approve'))
+      expect(approveCall).toBeTruthy()
+      expect(String(approveCall![0])).toContain('/api/datasets/abc-123/access-requests/req-1/approve')
+      expect(JSON.parse(String(approveCall![1]?.body))).toEqual(
+        expect.objectContaining({ grant_tx_hash: '0x' + 'cd'.repeat(32), owner_addr: '0xfcba1234567890abcdef1234567890abcdef1234' })
+      )
+    })
   })
 })

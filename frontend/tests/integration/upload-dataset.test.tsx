@@ -13,6 +13,7 @@ jest.mock('../../src/hooks/useWallet', () => ({
     account: {
       address: '0x1234567890abcdef',
     },
+    signAndSubmitTransaction: jest.fn().mockResolvedValue({ hash: '0x' + 'aa'.repeat(32) }),
   }),
 }))
 
@@ -140,6 +141,9 @@ describe('Upload Dataset Page Integration Tests', () => {
     expect(sentFormData!.get('iv')).toBeTruthy()
     expect(sentFormData!.get('auth_tag')).toBeTruthy()
     expect(sentFormData!.get('data_key')).toBeTruthy()
+    // The user-signed registration must be attached
+    expect(sentFormData!.get('dataset_id')).toBeTruthy()
+    expect(sentFormData!.get('register_tx_hash')).toBe('0x' + 'aa'.repeat(32))
   })
 
   it('shows blob id and merkle root on success', async () => {
