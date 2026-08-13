@@ -18,7 +18,12 @@ import logger from './middleware/logger';
 import downloadRouter from './routes/download';
 
 const app = express();
-app.use(cors({ origin: config.cors.origin }));
+// CORS_ORIGIN may be a comma-separated list (e.g. localhost + Vercel URL)
+const corsOrigins = String(config.cors.origin)
+  .split(',')
+  .map((o) => o.trim())
+  .filter(Boolean);
+app.use(cors({ origin: corsOrigins.length === 1 ? corsOrigins[0] : corsOrigins }));
 
 // Proxy to Shelby RPC with x-api-key injected (SDK sends Bearer which the gateway rejects).
 // MUST be mounted BEFORE express.json() so request bodies are streamed through untouched.
