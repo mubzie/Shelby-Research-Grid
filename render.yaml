@@ -1,0 +1,50 @@
+# Render Blueprint — one-click deploy of the Shelby Research Grid backend.
+# Create a Render Blueprint from this file (or "New +" → Blueprint → paste repo URL).
+# Secrets marked `sync: false` are set manually in the Render dashboard after creation.
+
+services:
+  - type: web
+    name: shelby-research-backend
+    runtime: node
+    plan: starter
+    region: frankfurt
+    healthCheckPath: /health
+    buildCommand: npm install && npm run build:prod
+    startCommand: node dist/index.js
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: LOG_LEVEL
+        value: info
+      - key: APTOS_NETWORK
+        value: testnet
+      - key: APTOS_RPC_URL
+        value: https://fullnode.testnet.aptoslabs.com/v1
+      - key: APTOS_MODULE_ADDRESS
+        value: 0xed8c57d7438e3a8ac788e9b166ec576c2f2ecfbd29d973815af294af4d755a4f
+      - key: SHELBY_RPC_URL
+        value: https://shelby.shelbynet.shelby.xyz/shelby
+      - key: SHELBY_LOCATION_HINT
+        value: shelbynet-1
+      - key: SHELBY_RPC_PROXY_URL
+        value: http://localhost:${PORT}/api/shelby-rpc
+      - key: DATABASE_URL
+        fromDatabase:
+          name: shelby-research-db
+          property: connectionString
+      - key: APTOS_PRIVATE_KEY
+        sync: false
+      - key: SHELBY_API_KEY
+        sync: false
+      - key: CORS_ORIGIN
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: SERVER_KEY_SEED
+        generateValue: true
+
+databases:
+  - name: shelby-research-db
+    databaseName: shelby
+    user: shelby
+    plan: free

@@ -31,6 +31,14 @@ Browser (Vercel static site)          Managed Node host (Render/Railway/Fly)
   `psql "$DATABASE_URL" -f src/db/schema.sql`
 - Note: encryption data keys are wrapped with `SERVER_KEY_SEED`/`APTOS_PRIVATE_KEY` — set a stable `SERVER_KEY_SEED` before any uploads.
 
+## 1b. One-click backend via Render Blueprint (`render.yaml`)
+`render.yaml` at the repo root provisions the web service + Postgres automatically:
+- Render → **New +** → **Blueprint** → paste the repo URL → deploy.
+- It sets everything except the secrets marked `sync: false` in the blueprint:
+  `APTOS_PRIVATE_KEY`, `SHELBY_API_KEY`, `CORS_ORIGIN` (set these in the service's
+  Environment tab after creation; `CORS_ORIGIN` = your Vercel app URL).
+- `JWT_SECRET` / `SERVER_KEY_SEED` are auto-generated and stable.
+
 ## 2. Backend — managed Node (NOT Vercel serverless)
 The backend is a long-running service (persistent DB pool, `node-cron`, streaming Shelby proxy, heavy ESM SDK). Vercel Functions can't host it.
 
@@ -76,10 +84,16 @@ The backend is a long-running service (persistent DB pool, `node-cron`, streamin
 - **Memory**: the Shelby SDK buffers blobs in memory + erasure coding — keep file sizes reasonable and instance RAM ≥ 512 MB.
 - **Sleeping hosts**: free tiers hibernate; the settlement cron only runs while awake.
 - **Data keys**: set `SERVER_KEY_SEED` before first upload; changing it later breaks decryption of wrapped keys (rotate via re-upload).
-- **Node version**: requires Node ≥ 20 (ESM SDK + WebCrypto). Set `NODE_VERSION=20` (Render) or `.nvmrc` `20`.
+- **Node version**: requires Node ≥ 20 (ESM SDK + WebCrypto). Set `NODE_VERSION=20` (Render) or `.nvmrc` `20` (committed).
 - Do NOT put real secrets in Vercel/Render env previews that aren't needed; `.env.production.example` is the reference, never commit real values.
+
+## 6. CI (already in the repo)
+`.github/workflows/ci.yml` runs on push/PR to `main`/`testnet-migration`:
+- Backend: `npm ci` → lint → `tsc --noEmit` → jest
+- Frontend: `npm ci` → lint → `tsc -p tsconfig.app.json` → jest → build
+- Contracts: installs the aptos CLI → `aptos move test`
+(Playwright E2E is intentionally excluded from CI — run locally with `npm run test:e2e`.)
 
 ## 6. Optional hardening (later phases)
 - KMS/signer service for the platform key (instead of env private key)
-- CI (GitHub Actions): test + typecheck + build on PR
 - Sentry/logging on the backend
