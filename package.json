@@ -11,13 +11,16 @@
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",
     "lint": "eslint -c eslint.config.cjs src --ext .ts",
-    "lint:fix": "eslint src --ext .ts --fix"
+    "lint:fix": "eslint src --ext .ts --fix",
+    "probe:shelby": "node -e \"fetch('http://localhost:3001/api/shelby/status').then(r=>r.json()).then(d=>console.log(d.message, '| ok:', d.ok)).catch(e=>console.log('backend not running:', e.message))\""
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
+    "@aptos-labs/ts-sdk": "^6.3.1",
+    "@shelby-protocol/sdk": "^0.7.0",
     "@types/express": "^5.0.6",
     "@types/multer": "^2.1.0",
     "@types/node": "^25.9.1",
@@ -26,6 +29,7 @@
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
     "multer": "^2.1.1",
+    "node-cron": "^4.6.0",
     "pg": "^8.21.0",
     "ts-node": "^10.9.2",
     "typescript": "^6.0.3"

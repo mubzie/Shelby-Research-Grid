@@ -59,7 +59,7 @@ module shelby_research::access_control {
     }
 
     // Register dataset ownership
-    public fun register_dataset(account: &signer, dataset_id: vector<u8>) acquires DatasetAccessManager {
+    public entry fun register_dataset(account: &signer, dataset_id: vector<u8>) acquires DatasetAccessManager {
         initialize(account);
         let addr = signer::address_of(account);
         let manager = borrow_global_mut<DatasetAccessManager>(addr);
@@ -73,7 +73,7 @@ module shelby_research::access_control {
     }
 
     // Grant access to a collaborator
-    public fun grant_access(
+    public entry fun grant_access(
         owner: &signer,
         dataset_id: vector<u8>,
         grantee: address,
@@ -113,7 +113,7 @@ module shelby_research::access_control {
     }
 
     // Revoke access
-    public fun revoke_access(
+    public entry fun revoke_access(
         owner: &signer,
         dataset_id: vector<u8>,
         grantee: address,
@@ -128,7 +128,6 @@ module shelby_research::access_control {
                 let grant = vector::borrow_mut(grants, i);
                 if (grant.grantee == grantee) {
                     grant.is_active = false;
-                    break
                 };
                 i = i + 1;
             };
@@ -141,6 +140,7 @@ module shelby_research::access_control {
     }
 
     // Check if reader has valid access
+    #[view]
     public fun has_valid_access(
         owner: address,
         dataset_id: vector<u8>,
@@ -172,7 +172,7 @@ module shelby_research::access_control {
     }
 
     // Log a read event
-    public fun log_read(
+    public entry fun log_read(
         owner: &signer,
         dataset_id: vector<u8>,
         reader: address,

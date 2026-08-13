@@ -12,7 +12,7 @@ export const FileUploadInput = ({
   onFileSelect,
   onError,
   maxSize = 5 * 1024 * 1024 * 1024,
-  accept = '.csv,.json,.gz',
+  accept = '.csv,.tsv,.txt,.json,.xlsx,.gz,.fasta,.fa,.fastq',
   ...rest
 }: FileUploadInputProps) => {
   const inputRef = useRef<HTMLInputElement>(null)

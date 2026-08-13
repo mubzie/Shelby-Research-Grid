@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useWallet as useAptosWallet } from '@aptos-labs/wallet-adapter-react'
+import { Aptos, AptosConfig, Network } from '@aptos-labs/ts-sdk'
 
 export interface WalletAccount {
   address: string
@@ -17,8 +18,6 @@ export interface UseWalletReturn {
 }
 
 const WALLET_STORAGE_KEY = 'aptos:wallet'
-const APTOS_COIN_STORE = '0x1::coin::CoinStore<0x1::aptos_coin::AptosCoin>'
-const APTOS_FULLNODE_URL = 'https://fullnode.testnet.aptoslabs.com/v1'
 
 const readStoredAccount = (): WalletAccount | null => {
   const stored = localStorage.getItem(WALLET_STORAGE_KEY)
@@ -30,26 +29,17 @@ const normalizeAddress = (address: string | { toString(): string } | undefined) 
   return typeof address === 'string' ? address : address.toString()
 }
 
-const parseAptBalance = (resources: Array<{ type?: string; data?: { coin?: { value?: string } } }>) => {
-  const coinStore = resources.find((resource) => resource.type?.includes(APTOS_COIN_STORE))
-  const octas = Number(coinStore?.data?.coin?.value ?? 0)
-
-  if (!Number.isFinite(octas)) {
-    return 0
+let aptosClient: Aptos | null = null
+const getAptosClient = () => {
+  if (!aptosClient) {
+    aptosClient = new Aptos(new AptosConfig({ network: Network.SHELBYNET }))
   }
-
-  return octas / 100000000
+  return aptosClient
 }
 
 const fetchAptBalance = async (address: string) => {
-  const response = await fetch(`${APTOS_FULLNODE_URL.replace(/\/$/, '')}/accounts/${address}/resources`)
-
-  if (!response.ok) {
-    throw new Error(`Balance lookup failed (${response.status})`)
-  }
-
-  const resources = (await response.json()) as Array<{ type?: string; data?: { coin?: { value?: string } } }>
-  return parseAptBalance(resources)
+  const amount = await getAptosClient().getAccountAPTAmount({ accountAddress: address })
+  return Number(amount) / 1e8
 }
 
 export const useWallet = (): UseWalletReturn => {
@@ -85,7 +75,7 @@ export const useWallet = (): UseWalletReturn => {
             setAccount(stored)
           }
         }
-      } catch (err) {
+      } catch {
         if (!active) return
         const stored = readStoredAccount()
         setAccount(stored)
@@ -137,9 +127,14 @@ export const useWallet = (): UseWalletReturn => {
 
       // Call adapter.connect(walletName) which will open the user's wallet or the wallet selector
       // If walletName is provided (e.g., 'Petra') it attempts a direct connection to that wallet
-      await adapter.connect(walletName as any)
+      await adapter.connect(walletName as never)
 
-      // adapter.account will update via effect above
+      // adapter.account updates via effect, but apply it immediately so state is consistent
+      const nextAccountAddress = normalizeAddress(adapter.account?.address)
+      if (nextAccountAddress) {
+        setAccount({ address: nextAccountAddress })
+        localStorage.setItem(WALLET_STORAGE_KEY, nextAccountAddress)
+      }
     } catch (connectError) {
       const message = connectError instanceof Error ? connectError.message : 'Wallet connection failed.'
       setError(message)
@@ -152,7 +147,7 @@ export const useWallet = (): UseWalletReturn => {
   const disconnect = useCallback(async () => {
     try {
       await adapter.disconnect?.()
-    } catch (err) {
+    } catch {
       // ignore
     }
 

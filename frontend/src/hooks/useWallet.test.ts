@@ -3,32 +3,45 @@ import { useWallet } from './useWallet'
 
 const walletAddress = '0xfcba1234567890abcdef1234567890abcdef1234'
 
-describe('useWallet', () => {
-  const mockFetch = jest.fn()
-  const mockConnect = jest.fn()
-  const mockDisconnect = jest.fn()
-  const mockAccount = jest.fn()
+const mockAdapter = {
+  connected: false,
+  account: null as { address: string } | null,
+  connect: jest.fn(),
+  disconnect: jest.fn(),
+  network: { name: 'shelbynet' },
+}
 
+const mockGetAccountAPTAmount = jest.fn()
+
+jest.mock('@aptos-labs/wallet-adapter-react', () => ({
+  useWallet: () => mockAdapter,
+}))
+
+jest.mock('@aptos-labs/ts-sdk', () => ({
+  Network: { SHELBYNET: 'shelbynet', DEVNET: 'devnet', TESTNET: 'testnet' },
+  AptosConfig: jest.fn(),
+  Aptos: jest.fn().mockImplementation(() => ({
+    getAccountAPTAmount: mockGetAccountAPTAmount,
+  })),
+}))
+
+describe('useWallet', () => {
   beforeEach(() => {
     localStorage.clear()
-    mockFetch.mockReset()
-    mockConnect.mockReset()
-    mockDisconnect.mockReset()
-    mockAccount.mockReset()
+    mockGetAccountAPTAmount.mockReset()
+    mockAdapter.connect.mockReset()
+    mockAdapter.disconnect.mockReset()
+    mockAdapter.connected = false
+    mockAdapter.account = null
+    mockAdapter.connect.mockImplementation(async () => {
+      mockAdapter.account = { address: walletAddress }
+      mockAdapter.connected = true
+    })
+    mockAdapter.disconnect.mockImplementation(async () => {
+      mockAdapter.account = null
+      mockAdapter.connected = false
+    })
 
-    mockAccount.mockResolvedValue(null)
-    mockConnect.mockResolvedValue({ address: walletAddress })
-
-    global.fetch = mockFetch as unknown as typeof fetch
-    (window as any).aptos = {
-      connect: mockConnect,
-      disconnect: mockDisconnect,
-      account: mockAccount,
-    }
-  })
-  
-  afterEach(() => {
-    delete (window as any).aptos
   })
 
   it('returns disconnected state initially', async () => {
@@ -41,15 +54,7 @@ describe('useWallet', () => {
   })
 
   it('connects wallet and stores address', async () => {
-    mockFetch.mockResolvedValue({
-      ok: true,
-      json: async () => [
-        {
-          type: '0x1::coin::CoinStore<0x1::aptos_coin::AptosCoin>',
-          data: { coin: { value: '150000000' } },
-        },
-      ],
-    })
+    mockGetAccountAPTAmount.mockResolvedValue(150000000n)
 
     const { result } = renderHook(() => useWallet())
 
@@ -59,17 +64,14 @@ describe('useWallet', () => {
       await result.current.connect()
     })
 
-    expect(mockConnect).toHaveBeenCalled()
+    expect(mockAdapter.connect).toHaveBeenCalled()
     expect(result.current.connected).toBe(true)
     expect(result.current.account?.address).toBe(walletAddress)
     expect(result.current.balance?.apt).toBe(1.5)
   })
 
   it('persists wallet connection to localStorage', async () => {
-    mockFetch.mockResolvedValue({
-      ok: true,
-      json: async () => [],
-    })
+    mockGetAccountAPTAmount.mockResolvedValue(0n)
 
     const { result } = renderHook(() => useWallet())
 
@@ -95,10 +97,7 @@ describe('useWallet', () => {
   })
 
   it('disconnects wallet and clears storage', async () => {
-    mockFetch.mockResolvedValue({
-      ok: true,
-      json: async () => [],
-    })
+    mockGetAccountAPTAmount.mockResolvedValue(0n)
 
     const { result } = renderHook(() => useWallet())
 
@@ -114,22 +113,14 @@ describe('useWallet', () => {
       await result.current.disconnect()
     })
 
-    expect(mockDisconnect).toHaveBeenCalled()
+    expect(mockAdapter.disconnect).toHaveBeenCalled()
     expect(result.current.connected).toBe(false)
     expect(result.current.account).toBe(null)
     expect(localStorage.getItem('aptos:wallet')).toBeNull()
   })
 
-  it('sets balance from testnet resources after connect', async () => {
-    mockFetch.mockResolvedValue({
-      ok: true,
-      json: async () => [
-        {
-          type: '0x1::coin::CoinStore<0x1::aptos_coin::AptosCoin>',
-          data: { coin: { value: '250000000' } },
-        },
-      ],
-    })
+  it('sets balance from the network after connect', async () => {
+    mockGetAccountAPTAmount.mockResolvedValue(250000000n)
 
     const { result } = renderHook(() => useWallet())
 

@@ -2,9 +2,8 @@ module shelby_research::payment {
     use std::signer;
     use aptos_framework::event;
     use aptos_framework::timestamp;
-    use aptos_framework::coin;
-    use aptos_framework::aptos_coin::AptosCoin;
 
+    #[event]
     struct ReadPaymentEvent has drop, store {
         dataset_id: vector<u8>,
         reader: address,
@@ -13,6 +12,7 @@ module shelby_research::payment {
         timestamp: u64,
     }
 
+    #[event]
     struct PaymentSettled has drop, store {
         dataset_id: vector<u8>,
         uploader: address,
@@ -21,7 +21,7 @@ module shelby_research::payment {
     }
 
     // Record a read and queue payment
-    public fun record_read(
+    public entry fun record_read(
         uploader: &signer,
         dataset_id: vector<u8>,
         reader: address,
@@ -38,7 +38,7 @@ module shelby_research::payment {
     }
 
     // Settle pending payments (batch operation)
-    public fun settle_dataset_payments(
+    public entry fun settle_dataset_payments(
         uploader: &signer,
         dataset_id: vector<u8>,
         total_milliapt: u64,

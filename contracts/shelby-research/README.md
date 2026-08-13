@@ -26,15 +26,36 @@ aptos init --network devnet
 
 ### 3. Deploy to devnet
 ```bash
-aptos move publish --network devnet
+aptos move publish --assume-yes
 ```
-
-Save the module address from deployment output to APTOS_MODULE_ADDRESS in .env.local
 
 ### 4. Test on devnet
 ```bash
-aptos move test --network devnet
+aptos move test
 ```
+
+## Deployment status (shelbynet)
+
+- Network: **shelbynet** (Aptos-based Shelby network, chain 118, fullnode `api.shelbynet.aptoslabs.com/v1`)
+- Account: `0xed8c57d7438e3a8ac788e9b166ec576c2f2ecfbd29d973815af294af4d755a4f` (see `.aptos/config.yaml` at repo root; funded via `faucet.shelbynet.shelby.xyz/mint`)
+- Modules published: `access_control`, `payment`, `access_control_tests` (dev-only)
+- Functions `register_dataset`, `grant_access`, `revoke_access`, `log_read`, `record_read`, `settle_dataset_payments` are `entry` functions callable by the backend; `has_valid_access` is a `#[view]` function
+- Set `APTOS_MODULE_ADDRESS` and `APTOS_PRIVATE_KEY` in `.env.local` to match this account
+
+> Note: the backend signs all on-chain transactions with the platform account, so on-chain
+> dataset owners/grants resolve to that address. The original uploader address is stored in
+> the DB (`datasets.uploader_addr`) and in upload metadata.
+>
+> Note: blob storage is handled by the `@shelby-protocol/sdk` (real blob registration,
+> storage-provider upload, and merkle commitments on shelbynet). The RPC gateway
+> (`shelby.shelbynet.shelby.xyz/shelby`) rate-limits anonymous requests; a geomi **server**
+> key (`aptoslabs_...`, covering the shelbynet RPC upstream) lifts the limit. The backend
+> proxies RPC calls via `/api/shelby-rpc` injecting `x-api-key` (the SDK sends `Authorization:
+> Bearer`, which the gateway rejects). Verified end-to-end: upload → on-chain registration →
+> integrity re-verification → authorized download → AES-GCM decryption → byte-exact plaintext,
+> plus read logging (log_read/record_read), counters, and daily settlement cron.
+
+
 
 ## Contract Functions
 

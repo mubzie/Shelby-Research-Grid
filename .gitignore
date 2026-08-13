@@ -16,3 +16,6 @@ coverage/
 .vscode/
 .env.production
 .env.staging
+contracts/shelby-research/build/
+frontend/test-results/
+frontend/playwright-report/

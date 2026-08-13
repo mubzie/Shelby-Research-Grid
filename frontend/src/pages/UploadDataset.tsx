@@ -5,8 +5,32 @@ import FileUploadInput from '../components/FileUploadInput'
 import Button from '../components/Button'
 import { useWallet } from '../hooks/useWallet'
 import { API_BASE_URL } from '../config'
+import { encryptFile } from '../utils/encryption'
 
-const UploadDataset = () => {
+export interface UploadResult {
+  dataset_id: string | null
+  shelby_blob_id: string | null
+  merkle_root: string | null
+  on_chain_tx: string | null
+  error?: string
+}
+
+export interface EncryptionService {
+  encrypt: (data: ArrayBuffer | Uint8Array) => Promise<{
+    ciphertext: Uint8Array
+    iv: string
+    authTag: string
+    dataKey: string
+  }>
+}
+
+const defaultEncryptionService: EncryptionService = { encrypt: encryptFile }
+
+interface UploadDatasetProps {
+  encryptionService?: EncryptionService
+}
+
+const UploadDataset = ({ encryptionService = defaultEncryptionService }: UploadDatasetProps) => {
   const navigate = useNavigate()
   const { ready = true, connected, account } = useWallet()
   const [datasetName, setDatasetName] = useState('')
@@ -16,6 +40,7 @@ const UploadDataset = () => {
   const [isUploading, setIsUploading] = useState(false)
   const [uploadError, setUploadError] = useState<string | null>(null)
   const [uploadSuccess, setUploadSuccess] = useState(false)
+  const [lastUpload, setLastUpload] = useState<UploadResult | null>(null)
 
   useEffect(() => {
     if (ready && !connected) {
@@ -36,7 +61,12 @@ const UploadDataset = () => {
     setUploadError(null)
   }
 
-  const isFormValid = datasetName.trim() && selectedFile
+  const handleFileError = (error: string) => {
+    setSelectedFile(null)
+    setUploadError(error)
+  }
+
+  const isFormValid = Boolean(datasetName.trim() && selectedFile)
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -55,8 +85,17 @@ const UploadDataset = () => {
       }
 
       const file = selectedFile
+      const fileBytes = await new Response(file).arrayBuffer()
+
+      // Encrypt client-side BEFORE anything leaves the browser
+      const enc = await encryptionService.encrypt(fileBytes)
+      const ciphertextFile = new File([enc.ciphertext.slice().buffer as ArrayBuffer], `${file.name}.enc`, { type: 'application/octet-stream' })
+
       const formData = new FormData()
-      formData.append('file', file)
+      formData.append('file', ciphertextFile)
+      formData.append('iv', enc.iv)
+      formData.append('auth_tag', enc.authTag)
+      formData.append('data_key', enc.dataKey)
       formData.append(
         'metadata',
         JSON.stringify({
@@ -71,31 +110,29 @@ const UploadDataset = () => {
       )
       formData.append('uploader_addr', account.address)
 
-      // If running in a test environment without fetch (jsdom/node), fallback to simulated upload
-      if (typeof fetch === 'undefined') {
-        // Simulate upload delay (previous behaviour in dev)
-        await new Promise((resolve) => setTimeout(resolve, 1500))
-        setUploadSuccess(true)
-        setTimeout(() => {
-          navigate('/dashboard')
-        }, 2000)
-      } else {
-        const response = await fetch(`${API_BASE_URL.replace(/\/$/, '')}/datasets/upload`, {
-          method: 'POST',
-          body: formData,
-        })
+      const response = await fetch(`${API_BASE_URL.replace(/\/$/, '')}/api/datasets/upload`, {
+        method: 'POST',
+        body: formData,
+      })
 
-        const result = (await response.json()) as { error?: string; dataset_id?: string | null }
-
-        if (!response.ok) {
-          throw new Error(result.error || 'Upload failed. Please try again.')
-        }
-
-        setUploadSuccess(true)
-        setTimeout(() => {
-          navigate('/dashboard')
-        }, 2000)
+      let result: UploadResult = {
+        dataset_id: null,
+        shelby_blob_id: null,
+        merkle_root: null,
+        on_chain_tx: null,
       }
+      try {
+        result = (await response.json()) as UploadResult
+      } catch {
+        result.error = `Upload failed (HTTP ${response.status})`
+      }
+
+      if (!response.ok) {
+        throw new Error(result.error || `Upload failed (HTTP ${response.status}). Please try again.`)
+      }
+
+      setLastUpload(result)
+      setUploadSuccess(true)
     } catch (error) {
       setUploadError(
         error instanceof Error ? error.message : 'Upload failed. Please try again.'
@@ -127,8 +164,25 @@ const UploadDataset = () => {
           <div className="success-state" data-testid="upload-success">
             <div className="success-message">
               <h2>✓ Upload Successful</h2>
-              <p>Your dataset has been securely uploaded and recorded on the blockchain.</p>
-              <p className="small">Redirecting to dashboard...</p>
+              <p>Your dataset has been encrypted, uploaded to the Shelby network, and recorded on-chain.</p>
+              {lastUpload?.shelby_blob_id && (
+                <p className="upload-result-line" data-testid="upload-blob-id">
+                  Blob ID: <code>{lastUpload.shelby_blob_id}</code>
+                </p>
+              )}
+              {lastUpload?.merkle_root && (
+                <p className="upload-result-line" data-testid="upload-merkle-root">
+                  Merkle Root: <code>{lastUpload.merkle_root}</code>
+                </p>
+              )}
+              {lastUpload?.on_chain_tx && (
+                <p className="upload-result-line">
+                  On-chain tx: <code>{lastUpload.on_chain_tx.slice(0, 20)}…</code>
+                </p>
+              )}
+              <Button variant="primary" onClick={() => navigate('/dashboard')} data-testid="upload-done">
+                Back to Dashboard
+              </Button>
             </div>
           </div>
         ) : (
@@ -137,6 +191,7 @@ const UploadDataset = () => {
               <label>Dataset File *</label>
               <FileUploadInput
                 onFileSelect={handleFileSelect}
+                onError={handleFileError}
                 data-testid="file-upload"
               />
               {selectedFile && (
@@ -202,7 +257,7 @@ const UploadDataset = () => {
                 loading={isUploading}
                 data-testid="upload-submit"
               >
-                {isUploading ? 'Uploading...' : 'Upload Dataset'}
+                {isUploading ? 'Uploading...' : uploadError ? 'Retry Upload' : 'Upload Dataset'}
               </Button>
               <Button variant="secondary" type="button" onClick={handleReset} disabled={isUploading}>
                 Reset

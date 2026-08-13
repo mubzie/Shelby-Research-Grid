@@ -9,6 +9,8 @@ import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import config from './config';
 import { initDb } from './services/db';
+import { startSettlementCron } from './cron/settlement';
+import shelbyProxyRouter, { probeShelbyRpc } from './middleware/shelbyProxy';
 import healthRouter from './routes/health';
 import datasetsRouter from './routes/datasets';
 import devRouter from './routes/dev';
@@ -17,10 +19,26 @@ import downloadRouter from './routes/download';
 
 const app = express();
 app.use(cors({ origin: config.cors.origin }));
+
+// Proxy to Shelby RPC with x-api-key injected (SDK sends Bearer which the gateway rejects).
+// MUST be mounted BEFORE express.json() so request bodies are streamed through untouched.
+app.use('/api/shelby-rpc', shelbyProxyRouter);
+
 app.use(express.json());
 app.use(logger);
 
 app.use('/health', healthRouter);
+
+// Shelby RPC quota status (429 = rate limited, 200 = ready to upload/download)
+app.get('/api/shelby/status', async (_req: Request, res: Response) => {
+  const probe = await probeShelbyRpc();
+  res.status(probe.ok ? 200 : 503).json({
+    ok: probe.ok,
+    rpc_status: probe.status,
+    message: probe.ok ? 'Shelby RPC ready' : 'Shelby RPC rate-limited; retry later',
+  });
+});
+
 app.use('/api/datasets', datasetsRouter);
 
 if (process.env.NODE_ENV === 'development') {
@@ -44,6 +62,7 @@ async function start() {
   try {
     console.log('Initializing DB...');
     await initDb();
+    startSettlementCron();
     app.listen(port, () => {
       console.log(`Server listening on port ${port}`);
     });

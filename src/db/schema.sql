@@ -19,7 +19,10 @@ CREATE TABLE IF NOT EXISTS datasets (
   created_at TIMESTAMP DEFAULT NOW(),
   updated_at TIMESTAMP DEFAULT NOW(),
   total_reads INT DEFAULT 0,
-  total_revenue_earned_millAPT BIGINT DEFAULT 0
+  total_revenue_earned_millAPT BIGINT DEFAULT 0,
+  enc_iv TEXT,
+  enc_auth_tag TEXT,
+  enc_data_key TEXT
 );
 
 CREATE TABLE IF NOT EXISTS access_grants (

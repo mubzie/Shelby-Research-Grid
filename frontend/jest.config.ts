@@ -11,13 +11,30 @@ const config: Config = {
     '\\.(css|less|scss|sass)$': 'identity-obj-proxy',
   },
   setupFilesAfterEnv: ['<rootDir>/tests/setup.ts'],
+  transformIgnorePatterns: [
+    '/node_modules/(?!(@aptos-labs|@wallet-standard|@aptos-connect|@ant-design|antd|rc-|@babel/runtime|@floating-ui|dayjs|classnames|react-is|scheduler|@noble|@scure)/)',
+  ],
   transform: {
     '^.+\\.tsx?$': ['ts-jest', {
       tsconfig: {
         jsx: 'react-jsx',
         esModuleInterop: true,
-        types: ['jest', '@testing-library/jest-dom', 'node'],
+        target: 'es2023',
+        lib: ['ES2023', 'DOM'],
+        module: 'esnext',
+        moduleResolution: 'bundler',
+        types: ['jest', '@testing-library/jest-dom', 'node', 'vite/client'],
+        skipLibCheck: true,
+      },
+    }],
+    '^.+\\.jsx?$': ['ts-jest', {
+      tsconfig: {
+        allowJs: true,
+        esModuleInterop: true,
+        module: 'commonjs',
         moduleResolution: 'node',
+        target: 'es2022',
+        skipLibCheck: true,
       },
     }],
   },
