@@ -12,10 +12,10 @@ import logger from './middleware/logger';
 import downloadRouter from './routes/download';
 
 const app = express();
-// CORS_ORIGIN may be a comma-separated list (e.g. localhost + Vercel URL)
+// CORS_ORIGIN may be a comma-separated list (e.g. localhost + Vercel URL); trailing slashes are stripped.
 const corsOrigins = String(config.cors.origin)
   .split(',')
-  .map((o) => o.trim())
+  .map((o) => o.trim().replace(/\/+$/, ''))
   .filter(Boolean);
 app.use(cors({ origin: corsOrigins.length === 1 ? corsOrigins[0] : corsOrigins }));
 
