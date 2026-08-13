@@ -6,7 +6,7 @@ services:
   - type: web
     name: shelby-research-backend
     runtime: node
-    plan: starter
+    plan: free
     region: frankfurt
     healthCheckPath: /health
     buildCommand: npm install && npm run build:prod
