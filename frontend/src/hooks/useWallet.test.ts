@@ -8,7 +8,7 @@ const mockAdapter = {
   account: null as { address: string } | null,
   connect: jest.fn(),
   disconnect: jest.fn(),
-  network: { name: 'shelbynet' },
+  network: { name: 'testnet' },
 }
 
 const mockGetAccountAPTAmount = jest.fn()

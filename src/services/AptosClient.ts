@@ -29,7 +29,19 @@ class AptosClient {
     this.moduleAddress = (process.env.APTOS_MODULE_ADDRESS || config.aptos.moduleAddress).replace(/^0x/, '');
     const privateKey = process.env.APTOS_PRIVATE_KEY || config.aptos.privateKey;
 
-    this.client = new Aptos(new AptosConfig({ network: Network.SHELBYNET, fullnode: this.rpcUrl }));
+    // Resolve the Aptos network: shelbynet for storage (Shelby SDK), testnet for access control.
+    // The geomi gateway rejects Authorization: Bearer, so inject the API key as x-api-key header.
+    const shelbyApiKey = process.env.SHELBY_API_KEY || '';
+    const networkForChain = this.network === 'shelbynet' ? Network.SHELBYNET : Network.TESTNET;
+    this.client = new Aptos(
+      new AptosConfig({
+        network: networkForChain,
+        fullnode: this.rpcUrl,
+        clientConfig: shelbyApiKey
+          ? { HEADERS: { 'x-api-key': shelbyApiKey } as Record<string, string> }
+          : undefined,
+      })
+    );
     this.account = this.tryCreateAccount(privateKey);
 
     console.log('[AptosClient] Initialized network:', this.network, 'module:', this.moduleAddress, 'account:', this.account?.accountAddress.toString() || 'NONE');

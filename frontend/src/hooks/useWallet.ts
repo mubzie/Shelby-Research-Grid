@@ -32,7 +32,7 @@ const normalizeAddress = (address: string | { toString(): string } | undefined) 
 let aptosClient: Aptos | null = null
 const getAptosClient = () => {
   if (!aptosClient) {
-    aptosClient = new Aptos(new AptosConfig({ network: Network.SHELBYNET }))
+    aptosClient = new Aptos(new AptosConfig({ network: Network.TESTNET }))
   }
   return aptosClient
 }

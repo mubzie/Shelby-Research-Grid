@@ -4,7 +4,7 @@ import Landing from '../../src/pages/Landing'
 
 jest.mock('../../src/config', () => ({
   API_BASE_URL: 'http://localhost:3001',
-  APTOS_FULLNODE_URL: 'https://fullnode.devnet.aptoslabs.com/v1',
+  APTOS_FULLNODE_URL: 'https://fullnode.testnet.aptoslabs.com/v1',
 }))
 
 describe('Landing Page Integration Tests', () => {

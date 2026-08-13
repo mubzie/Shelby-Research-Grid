@@ -4,7 +4,7 @@ import UploadDataset from '../../src/pages/UploadDataset'
 
 jest.mock('../../src/config', () => ({
   API_BASE_URL: 'http://localhost:3001',
-  APTOS_FULLNODE_URL: 'https://fullnode.devnet.aptoslabs.com/v1',
+  APTOS_FULLNODE_URL: 'https://fullnode.testnet.aptoslabs.com/v1',
 }))
 
 jest.mock('../../src/hooks/useWallet', () => ({

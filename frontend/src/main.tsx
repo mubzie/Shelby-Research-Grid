@@ -11,7 +11,7 @@ createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <AptosWalletAdapterProvider
       autoConnect={true}
-      dappConfig={{ network: Network.DEVNET }}
+      dappConfig={{ network: Network.TESTNET }}
       optInWallets={['Petra']}
       onError={(error) => console.error('Wallet error:', error)}
     >
