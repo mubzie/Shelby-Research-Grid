@@ -12,7 +12,8 @@
     "test:coverage": "jest --coverage",
     "lint": "eslint -c eslint.config.cjs src --ext .ts",
     "lint:fix": "eslint src --ext .ts --fix",
-    "probe:shelby": "node -e \"fetch('http://localhost:3001/api/shelby/status').then(r=>r.json()).then(d=>console.log(d.message, '| ok:', d.ok)).catch(e=>console.log('backend not running:', e.message))\""
+    "probe:shelby": "node -e \"fetch('http://localhost:3001/api/shelby/status').then(r=>r.json()).then(d=>console.log(d.message, '| ok:', d.ok)).catch(e=>console.log('backend not running:', e.message))\"",
+    "build:prod": "tsc -p tsconfig.build.json"
   },
   "keywords": [],
   "author": "",

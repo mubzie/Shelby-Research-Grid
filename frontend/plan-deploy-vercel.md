@@ -1,105 +1,85 @@
-Deploying to Vercel - Plan
+# Deployment Plan — Vercel frontend + managed Node backend
 
-Goal
-- Deploy frontend to Vercel and provide a public URL for testers.
-- Host backend API (options: Vercel Serverless Functions or managed Node host).
+Current state (all committed on `main`, pushed to origin):
+- Frontend: React + Vite, wallet adapter (Petra, testnet), encrypted upload, access requests, downloads
+- Backend: Express + ts-node, Postgres (local), @shelby-protocol/sdk (shelbynet storage), Aptos testnet access control, daily settlement cron, in-process Shelby RPC proxy
+- Network model: hybrid — access control/payments on Aptos **testnet**, blob storage on **shelbynet**
 
-Quick summary
-- Prepare repo + env templates
-- Choose backend hosting and storage
-- Provision DB + object storage
-- Configure Aptos credentials and Shelby RPC
-- Deploy frontend to Vercel, set env vars, verify CORS
-- Run smoke tests and monitoring
+## Architecture
 
-Step-by-step
+```
+Browser (Vercel static site)          Managed Node host (Render/Railway/Fly)
+┌────────────────────────────┐        ┌──────────────────────────────────────┐
+│ Vite React app             │───────▶│ Express API (node dist/index.js)      │
+│ Petra wallet (testnet)     │  HTTPS │  - POST /api/datasets/upload          │
+│ signs register/grant txs   │        │  - download, access-requests, stats   │
+└────────────────────────────┘        │  - Shelby RPC proxy (/api/shelby-rpc) │
+                                      │  - settlement cron (daily)            │
+                                      │  - Postgres pool                      │
+                                      └──────────┬────────────────────────────┘
+                                                 │
+                              ┌──────────────────┴──────────────────┐
+                              │ shelbynet (storage)   Aptos testnet │
+                              │ Shelby RPC + SDK       (register,   │
+                              │ blob upload/download)  grants, reads│
+                              └─────────────────────────────────────┘
+```
 
-A. Preparation (local)
-- Add .env.production templates (do NOT commit secrets).
-- Verify frontend uses only import.meta.env.VITE_*.
-- Make server stateless; ensure uploads stream to external storage.
+## 1. Postgres (managed) — Neon or Render Postgres
+- Create a Neon (or Supabase/Render Postgres) project; copy `DATABASE_URL` (use the pooler URL).
+- Run the schema once (`src/db/schema.sql` — includes datasets, read_logs, access_grants, users, access_requests):
+  `psql "$DATABASE_URL" -f src/db/schema.sql`
+- Note: encryption data keys are wrapped with `SERVER_KEY_SEED`/`APTOS_PRIVATE_KEY` — set a stable `SERVER_KEY_SEED` before any uploads.
 
-B. Infrastructure
-- Postgres: provision managed DB (Neon/Supabase/RDS). Set DATABASE_URL.
-- Object storage: S3 or Shelby RPC endpoint.
-- Aptos: set APTOS_NETWORK (testnet/mainnet), APTOS_RPC_URL.
-- Use secure signing: prefer KMS or external signer instead of raw private keys in env.
-- Add SHELBY_RPC_URL and SHELBY_API_KEY as needed.
+## 2. Backend — managed Node (NOT Vercel serverless)
+The backend is a long-running service (persistent DB pool, `node-cron`, streaming Shelby proxy, heavy ESM SDK). Vercel Functions can't host it.
 
-C. Backend hosting options
-- Option 1 (recommended): Managed Node (Render, Cloud Run) for persistent DB pools and background jobs.
-- Option 2: Vercel Serverless Functions - simpler but watch Postgres pooling and file uploads.
+- **Render** (easiest): new Web Service → repo → build `npm install && npm run build`, start `node dist/index.js`, instance type at least 512 MB RAM (the Shelby SDK erasure-coding needs memory).
+- **Railway / Fly.io**: equivalent — same start command.
+- Set the env vars from `.env.production.example` (see table below).
+- Cron: the settlement job runs in-process daily at 02:00 server time. On free-tier hosts that sleep, either upgrade to a non-sleeping plan or add an uptime ping.
 
-D. Frontend (Vercel) setup
-- Connect repo to Vercel.
-- Build command: npm run build (from frontend folder)
-- Output dir: frontend/dist (or Vite default)
-- Add Environment Variables in Vercel (VITE_API_BASE_URL, VITE_APTOS_FULLNODE_URL).
-- Ensure backend CORS includes https://your-vercel-app.vercel.app.
+### Backend env vars
+| Var | Value |
+|---|---|
+| `PORT` | host-provided (Render sets it) |
+| `DATABASE_URL` | managed Postgres pooler URL |
+| `APTOS_NETWORK` | `testnet` |
+| `APTOS_RPC_URL` | `https://fullnode.testnet.aptoslabs.com/v1` |
+| `APTOS_PRIVATE_KEY` | platform key (0xed8c57…) |
+| `APTOS_MODULE_ADDRESS` | `0xed8c57d7438e3a8ac788e9b166ec576c2f2ecfbd29d973815af294af4d755a4f` |
+| `SHELBY_RPC_URL` | `https://shelby.shelbynet.shelby.xyz/shelby` |
+| `SHELBY_API_KEY` | geomi server key (shelbynet RPC scope) |
+| `SHELBY_LOCATION_HINT` | `shelbynet-1` |
+| `SHELBY_RPC_PROXY_URL` | `http://localhost:PORT/api/shelby-rpc` (in-process proxy) |
+| `CORS_ORIGIN` | `https://<your-app>.vercel.app` |
+| `JWT_SECRET` | long random string |
+| `SERVER_KEY_SEED` | stable secret (data-key wrapping) |
 
-E. DNS & TLS
-- Add custom domain in Vercel or use vercel.app url.
-- DNS: add CNAME/A records; Vercel provisions TLS automatically.
+## 3. Frontend — Vercel
+- Import the repo in Vercel; project root = `frontend/`.
+- Build command: `npm run build`; output dir: `dist`.
+- Env vars (project settings → Environment Variables):
+  - `VITE_API_BASE_URL=https://<your-backend>.onrender.com`
+  - `VITE_APTOS_MODULE_ADDRESS=0xed8c57…`
+  - `VITE_APTOS_FULLNODE_URL=https://fullnode.testnet.aptoslabs.com/v1`
+- Wallet network is hardcoded to testnet in `src/main.tsx` (matches the deployment).
 
-F. CI and deploy
-- Add GitHub Actions to run tests and build before deploy.
-- Enable Preview deployments for PRs.
+## 4. Post-deploy smoke test
+1. `curl https://<backend>/health` → 200
+2. `curl https://<backend>/api/shelby/status` → `{"ok":true,…}` (Shelby RPC reachable from the host IP)
+3. Browser: open the Vercel URL → connect Petra (testnet) → upload (wallet prompt) → request access from a second account → approve from the dashboard → download
+4. Verify CORS: no blocked requests in DevTools (backend `CORS_ORIGIN` must equal the Vercel origin)
 
-What will likely break / gotchas
-- process.env usage in browser code -> must use import.meta.env (fixed).
-- Postgres connection limits in serverless environments.
-- Local file uploads will fail in serverless; must use external storage.
-- Storing private keys in env is risky; prefer KMS.
-- CORS must include frontend domain.
+## 5. Known deployment gotchas
+- **Host IP vs local IP**: the Shelby RPC quota is per-IP — the hosted backend gets a fresh quota pool (good).
+- **Memory**: the Shelby SDK buffers blobs in memory + erasure coding — keep file sizes reasonable and instance RAM ≥ 512 MB.
+- **Sleeping hosts**: free tiers hibernate; the settlement cron only runs while awake.
+- **Data keys**: set `SERVER_KEY_SEED` before first upload; changing it later breaks decryption of wrapped keys (rotate via re-upload).
+- **Node version**: requires Node ≥ 20 (ESM SDK + WebCrypto). Set `NODE_VERSION=20` (Render) or `.nvmrc` `20`.
+- Do NOT put real secrets in Vercel/Render env previews that aren't needed; `.env.production.example` is the reference, never commit real values.
 
-Production env variables (examples)
-Frontend (Vercel project env):
-- VITE_API_BASE_URL=https://api.YOURDOMAIN.com
-- VITE_APTOS_FULLNODE_URL=https://fullnode.testnet.aptoslabs.com/v1
-
-Backend (host env / Vercel secrets):
-- DATABASE_URL=postgres://user:pass@host:5432/db
-- SHELBY_RPC_URL=https://shelby.example.com
-- SHELBY_API_KEY=...
-- APTOS_NETWORK=testnet
-- APTOS_RPC_URL=https://fullnode.testnet.aptoslabs.com/v1
-- APTOS_PRIVATE_KEY (prefer not stored; use KMS)
-- JWT_SECRET=...
-- CORS_ORIGIN=https://your-frontend-domain
-
-Test criteria (must pass)
-A. CI & build
-- All unit and integration tests pass in CI.
-- Frontend build artifact (dist) is produced.
-
-B. Staging smoke tests
-- Connect Wallet triggers injected-wallet prompt and returns an address.
-- Dashboard shows fetched Aptos balance (uses testnet-funded account).
-- Upload flow: file accepted, API responds with shelby_blob_id or dataset_id, DB row present.
-- No CORS or mixed-content errors; HTTPS enforced.
-- On-chain calls either return txHash or show safe stub results.
-
-C. Security & ops
-- No secrets in code or public logs.
-- Health endpoint returns 200.
-- Sentry/logging configured and accessible.
-
-Rollback & monitoring
-- Use Vercel rollback for frontend; host provider rollback for backend.
-- Add error tracking and uptime monitoring.
-
-Optional improvements
-- Support multiple wallet adapters (Petra, Martian).
-- Add a signer microservice using KMS.
-- Add Playwright E2E tests against staging with test wallets.
-
-Actionable next steps (pick one when ready)
-- Prepare Vercel project + add env vars (I can create doc/PR).
-- Convert backend to serverless-safe or prepare managed-host config.
-- Add CI pipeline for tests + deploy.
-
-References
-- Vite env docs: https://vitejs.dev/guide/env-and-mode.html
-- Vercel docs: https://vercel.com/docs
-
-Status: draft - waiting for confirmation before implementing any changes.
+## 6. Optional hardening (later phases)
+- KMS/signer service for the platform key (instead of env private key)
+- CI (GitHub Actions): test + typecheck + build on PR
+- Sentry/logging on the backend
