@@ -12,12 +12,21 @@ import logger from './middleware/logger';
 import downloadRouter from './routes/download';
 
 const app = express();
-// CORS_ORIGIN may be a comma-separated list (e.g. localhost + Vercel URL); trailing slashes are stripped.
-const corsOrigins = String(config.cors.origin)
+// CORS_ORIGIN may be a comma-separated list (e.g. localhost + Vercel URLs); trailing slashes
+// are stripped and entries containing '*' (e.g. https://*.vercel.app) become regex patterns —
+// Vercel preview deployments get a new subdomain on every deploy.
+const corsOriginConfig = String(config.cors.origin)
   .split(',')
   .map((o) => o.trim().replace(/\/+$/, ''))
-  .filter(Boolean);
-app.use(cors({ origin: corsOrigins.length === 1 ? corsOrigins[0] : corsOrigins }));
+  .filter(Boolean)
+  .map((o) => {
+    if (o.includes('*')) {
+      const escaped = o.split('*').map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('.*');
+      return new RegExp(`^${escaped}$`);
+    }
+    return o;
+  });
+app.use(cors({ origin: corsOriginConfig.length === 1 ? corsOriginConfig[0] : corsOriginConfig }));
 
 // Proxy to Shelby RPC with x-api-key injected (SDK sends Bearer which the gateway rejects).
 // MUST be mounted BEFORE express.json() so request bodies are streamed through untouched.
