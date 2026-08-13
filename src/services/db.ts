@@ -18,8 +18,13 @@ export async function initDb(): Promise<void> {
     // Try a simple connect first
     const client = await pool.connect();
     try {
-      const schemaPath = path.join(__dirname, '..', 'db', 'schema.sql');
-      if (fs.existsSync(schemaPath)) {
+      const schemaCandidates = [
+        path.join(__dirname, 'db', 'schema.sql'),             // bundled dist (esbuild copies it there)
+        path.join(__dirname, '..', 'db', 'schema.sql'),       // ts-node dev (src/services/../db)
+        path.join(process.cwd(), 'src', 'db', 'schema.sql'),  // repo root fallback
+      ];
+      const schemaPath = schemaCandidates.find((p) => fs.existsSync(p));
+      if (schemaPath) {
         const sql = fs.readFileSync(schemaPath, 'utf8');
         await client.query(sql);
         console.log('Database schema initialized.');

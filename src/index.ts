@@ -1,10 +1,4 @@
-import dotenv from 'dotenv';
-import path from 'path';
-
-// Load .env.local first (with highest priority), then .env
-dotenv.config({ path: path.resolve(__dirname, '../.env.local') });
-dotenv.config(); // Load .env as fallback
-
+import './env';
 import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import config from './config';
